@@ -1,0 +1,36 @@
+#!/usr/bin/python3
+
+import os
+import argparse
+import subprocess
+
+# parse arguments
+parser = argparse.ArgumentParser()
+parser.add_argument("fasm", metavar="input.s", help="the MIPS assembly file (ASCII)")
+args = parser.parse_args()
+
+fasm = args.fasm
+fhex = os.path.splitext(args.fasm)[0] + ".x"  # 构建输出文件路径
+
+# 提供QtSPIM的可执行文件路径
+SPIM = "/home/yuzhao-peng/Architecture/tools/spimsimulator-code-r764/spim/spim"
+
+cmd = [SPIM, "-notrap", "-file", fasm, "-dump", "text.asm"]
+subprocess.call(cmd)
+
+# 从文本文件中提取并保存机器代码
+with open("text.asm", "r") as asm_file:
+    lines = asm_file.readlines()
+    hex_data = []
+    for line in lines:
+        parts = line.split()
+        if len(parts) >= 2 and parts[1].startswith("0x"):
+            hex_data.append(parts[1][2:])
+
+# 将提取的数据保存到 fhex 文件中
+with open(fhex, "w") as hex_file:
+    hex_file.write("\n".join(hex_data))
+
+# 删除临时生成的文件
+os.remove("text.asm")
+os.remove("data.asm")
