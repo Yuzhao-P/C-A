@@ -1,0 +1,84 @@
+#include "cache.h"
+
+// initialize replacement state
+void CACHE::llc_initialize_replacement()
+{
+    // 在初始化时可以进行一些替换策略相关的初始化工作，LFU一般不需要特殊的初始化
+}
+
+// find replacement victim using LFU
+uint32_t CACHE::llc_find_victim(uint32_t cpu, uint64_t instr_id, uint32_t set, const BLOCK *current_set, uint64_t ip, uint64_t full_addr, uint32_t type)
+{
+    uint32_t way = 0;
+
+    // 首先填充无效的行
+    for (way = 0; way < NUM_WAY; way++) {
+        if (block[set][way].valid == false) {
+            DP(if (warmup_complete[cpu]) {
+                cout << "[" << NAME << "] " << __func__ << " instr_id: " << instr_id << " invalid set: " << set << " way: " << way;
+                cout << hex << " address: " << (full_addr >> LOG2_BLOCK_SIZE) << " victim address: " << block[set][way].address << " data: " << block[set][way].data;
+                cout << dec << " lru: " << block[set][way].lru << endl;
+            });
+
+            break;
+        }
+    }
+
+    // 如果当前 set 中的所有 way 都已经使用了，则需要根据LFU选择最少使用的进行替换
+    if (way == NUM_WAY) {
+        uint32_t min_freq = UINT32_MAX;
+        for (uint32_t i = 0; i < NUM_WAY; i++) {
+            if (block[set][i].lru < min_freq) {
+                min_freq = block[set][i].lru;
+                way = i;
+            }
+        }
+    }
+
+    DP(if (warmup_complete[cpu]) {
+        cout << "[" << NAME << "] " << __func__ << " instr_id: " << instr_id << " replace set: " << set << " way: " << way;
+        cout << hex << " address: " << (full_addr >> LOG2_BLOCK_SIZE) << " victim address: " << block[set][way].address << " data: " << block[set][way].data;
+        cout << dec << " lru: " << block[set][way].lru << endl;
+    });
+
+    if (way == NUM_WAY) {
+        cerr << "[" << NAME << "] " << __func__ << " no victim! set: " << set << endl;
+        assert(0);
+    }
+
+    return way;
+}
+
+// called on every cache hit and cache fill
+void CACHE::llc_update_replacement_state(uint32_t cpu, uint32_t set, uint32_t way, uint64_t full_addr, uint64_t ip, uint64_t victim_addr, uint32_t type, uint8_t hit)
+{
+    string TYPE_NAME;
+    if (type == LOAD)
+        TYPE_NAME = "LOAD";
+    else if (type == RFO)
+        TYPE_NAME = "RFO";
+    else if (type == PREFETCH)
+        TYPE_NAME = "PF";
+    else if (type == WRITEBACK)
+        TYPE_NAME = "WB";
+    else
+        assert(0);
+
+    if (hit)
+        TYPE_NAME += "_HIT";
+    else
+        TYPE_NAME += "_MISS";
+
+    if ((type == WRITEBACK) && ip)
+        assert(0);
+
+    // 如果是LFU替换策略，更新LFU计数
+    if (type != WRITEBACK) {
+        block[set][way].lru++;
+    }
+}
+
+void CACHE::llc_replacement_final_stats()
+{
+    // 在这里可以进行替换策略的统计信息收集，LFU一般不需要特殊的处理
+}

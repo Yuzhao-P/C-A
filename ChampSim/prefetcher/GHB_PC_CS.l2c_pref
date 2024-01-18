@@ -1,0 +1,100 @@
+#include "cache.h"
+#include <map>
+
+typedef unsigned long long ull;
+typedef unsigned int ui;
+
+#define PREFETCH_DEGREE 10
+#define LOOK_AHEAD 1
+#define GHB_SIZE 256
+#define IT_SIZE 256
+
+// 结构体定义，表示全局历史缓冲区的条目
+struct GHB {
+    ull pc;              // 程序计数器
+    ull cacheline_addr;  // 缓存行地址
+    ui prev;             // 前一个条目的索引
+};
+
+// 全局变量和数据结构
+static double cache_ac = 0, cache_miss = 0;
+static ui cur_idx = 0;
+static GHB my_GHB[GHB_SIZE];
+static std::map<int, ui> it;  // 索引表，将程序计数器的低位映射到GHB数组的索引
+
+// 初始化函数
+void CACHE::l2c_prefetcher_initialize() {
+    printf("GHB PC/CS prefetch Init\n");
+    memset(my_GHB, 0, sizeof(my_GHB));
+}
+
+// 预取操作函数
+uint32_t CACHE::l2c_prefetcher_operate(uint64_t addr, uint64_t ip, uint8_t cache_hit, uint8_t type, uint32_t metadata_in) {
+    ++cache_ac;
+
+    if (!cache_hit)
+        ++cache_miss;
+
+    uint64_t Cacheline_addr = addr >> LOG2_BLOCK_SIZE;
+
+    // 更新GHB条目
+    my_GHB[cur_idx].cacheline_addr = Cacheline_addr;
+    my_GHB[cur_idx].pc = ip;
+
+    // 更新GHB索引表
+    if (my_GHB[it[ip % IT_SIZE]].pc == ip)
+        my_GHB[cur_idx].prev = it[ip % IT_SIZE];
+    else
+        my_GHB[cur_idx].prev = cur_idx;
+
+    it[ip % IT_SIZE] = cur_idx;
+
+    uint64_t prefetch_addr;
+    ull stride1 = my_GHB[cur_idx].cacheline_addr;
+    ui ele_idx = cur_idx;
+    ull stride2 = 0;
+
+    for (int i = 0; i < 4 && my_GHB[ele_idx].prev != ele_idx && my_GHB[ele_idx].pc == ip; ++i) {
+        ui prev_idx = my_GHB[ele_idx].prev;
+
+        switch (i) {
+            case 1:
+                // 第一步：计算两个相邻缓存行地址之间的步长
+                // 更新当前步长为两个相邻缓存行地址的差值
+                ele_idx = prev_idx;
+                stride2 = my_GHB[ele_idx].cacheline_addr;
+                stride1 = stride1 - stride2;
+                break;
+            case 2:
+                // 第二步：计算前两个步长之间的步长
+                // 更新当前步长为前两个步长之间的差值
+                stride2 = stride2 - my_GHB[prev_idx].cacheline_addr;
+                break;
+            case 3:
+                // 第三步：判断前两个步长是否相等，如果相等则进行预取操作
+                if (stride1 == stride2) {
+                    // 根据当前缓存行地址以及步长进行预取
+                    for (int offset = LOOK_AHEAD * stride1; offset <= (LOOK_AHEAD + PREFETCH_DEGREE) * stride1; offset += stride1) {
+                        prefetch_addr = (Cacheline_addr + offset) << LOG2_BLOCK_SIZE;
+                        // 预取操作
+                        prefetch_line(ip, addr, prefetch_addr, FILL_L2, 0);
+                    }
+                }
+                break;
+        }
+    }
+
+    // 更新GHB索引
+    cur_idx = (cur_idx + 1) % GHB_SIZE;
+    return metadata_in;
+}
+
+// 缓存填充操作函数
+uint32_t CACHE::l2c_prefetcher_cache_fill(uint64_t addr, uint32_t set, uint32_t way, uint8_t prefetch, uint64_t evicted_addr, uint32_t metadata_in) {
+    return metadata_in;
+}
+
+// 最终统计函数
+void CACHE::l2c_prefetcher_final_stats() {
+    printf("GHB PC/CS prefetch is over\n");
+}
